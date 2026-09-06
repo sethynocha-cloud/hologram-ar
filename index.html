@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#02050a">
+  <meta name="color-scheme" content="dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Hologram">
+  <meta name="description" content="Point your phone camera at anything and watch the world turn into a live hologram.">
+  <title>Hologram AR</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Hidden camera element: WebGL samples its frames every animation frame. -->
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="view" aria-label="Hologram view. Tap to show or hide controls."></canvas>
+
+  <!-- Start screen -->
+  <section id="start" class="screen">
+    <h1 class="holo-title">HOLOGRAM<span>AR</span></h1>
+    <p class="tagline">Point your camera at anything. It becomes a hologram.</p>
+    <button id="startBtn" class="primary" type="button">ACTIVATE CAMERA</button>
+    <p class="hint">Best on a phone. Your camera feed stays on your device &mdash; nothing is uploaded.</p>
+    <p id="error" class="error" hidden></p>
+  </section>
+
+  <!-- Heads-up display shown while the camera runs -->
+  <div id="hud" hidden>
+    <div class="top-bar">
+      <div id="status" class="status"><span class="dot"></span><span id="statusText">LIVE</span></div>
+      <div class="top-actions">
+        <button id="flipBtn" class="icon-btn" type="button" aria-label="Switch camera" title="Switch camera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 12a8 8 0 0 1 13.5-5.8"/><path d="M17.5 3v3.5H14"/>
+            <path d="M20 12a8 8 0 0 1-13.5 5.8"/><path d="M6.5 21v-3.5H10"/>
+          </svg>
+        </button>
+        <button id="fsBtn" class="icon-btn" type="button" aria-label="Toggle fullscreen" title="Fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="bottom-bar">
+      <button id="themeBtn" class="chip" type="button" aria-label="Change hologram color">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/>
+          </svg>
+        </span>
+        <span class="lbl" id="themeLbl">Cyan</span>
+      </button>
+      <button id="styleBtn" class="chip" type="button" aria-label="Change hologram style">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 4 3 9l9 5 9-5-9-5z"/><path d="m3 14 9 5 9-5"/>
+          </svg>
+        </span>
+        <span class="lbl" id="styleLbl">Solid</span>
+      </button>
+      <button id="snapBtn" class="shutter" type="button" aria-label="Capture photo" title="Capture photo"></button>
+      <button id="recBtn" class="chip" type="button" aria-label="Record video">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5"/><circle id="recDot" cx="12" cy="12" r="4" fill="currentColor" stroke="none"/>
+          </svg>
+        </span>
+        <span class="lbl" id="recLbl">Record</span>
+      </button>
+    </div>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <div id="flash" aria-hidden="true"></div>
+
+  <script src="shaders.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#0d3448"/>
+      <stop offset="1" stop-color="#02050a"/>
+    </radialGradient>
+    <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#34e0ff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#34e0ff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="scan" width="4" height="8" patternUnits="userSpaceOnUse">
+      <rect width="4" height="3" fill="#000" fill-opacity="0.35"/>
+    </pattern>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M176 420 L336 420 L300 210 L212 210 Z" fill="url(#beam)"/>
+  <g filter="url(#glow)" fill="none" stroke="#34e0ff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M176 130 V330"/>
+    <path d="M336 130 V330"/>
+    <path d="M176 230 H336"/>
+  </g>
+  <rect x="120" y="100" width="272" height="260" fill="url(#scan)"/>
+  <ellipse cx="256" cy="422" rx="96" ry="14" fill="none" stroke="#34e0ff" stroke-width="8" stroke-opacity="0.9" filter="url(#glow)"/>
+  <ellipse cx="256" cy="422" rx="56" ry="7" fill="#34e0ff" fill-opacity="0.35"/>
+</svg>

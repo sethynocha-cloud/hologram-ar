@@ -12,6 +12,15 @@ The camera feed goes through a small WebGL pipeline on the phone's GPU:
 4. **Composite** – tint, chromatic aberration, crawling scanlines, a rolling band, random dropout
    rows, grain, flicker, glitch bursts and a vignette.
 
+The scan panel in the top-left corner tells you what the camera is looking at. An on-device
+object detector (TensorFlow.js running SSDLite MobileNetV2 trained on COCO, 80 everyday classes:
+people, animals, vehicles, furniture, phones, cups, laptops and so on) runs a couple of times a
+second, lists what it sees with a confidence bar, and draws target brackets over each object.
+Below the objects are live readouts computed from the frame: light level, motion, detail and colour
+tone. The detector's 4.6 MB weights ship inside the repo, load once and are cached by the browser;
+frames are still never uploaded anywhere. Photos and clips you save include the brackets and the
+readout.
+
 ## Try it on your phone
 
 The camera API only works on `https://` pages (or `localhost`), so the page has to be hosted.
@@ -34,6 +43,7 @@ app-like feel use *Add to Home Screen* (the page ships a web-app manifest and ic
 
 | Control | What it does |
 | --- | --- |
+| Scan panel (top left) | Objects the camera recognises, with confidence, plus light / motion / detail / tone |
 | Colour chip | Cycles the tint: Cyan, Matrix, Amber, Magenta, Ice, Spectrum |
 | Style chip | Cycles the look: Solid, Wire (outlines only), Scan (contour lines), Ghost (real colour bleeds through) |
 | Shutter | Saves a PNG (share sheet on phones, download elsewhere) |
@@ -57,16 +67,21 @@ To test on a phone over your LAN you need HTTPS; the simplest route is to push a
 ## Tinkering
 
 `shaders.js` holds the GLSL; `app.js` holds the themes, styles and effect constants (`THEMES`,
-`STYLES`, `FX`). Everything is exposed at runtime as `window.HologramAR` so you can experiment from
-the browser console, e.g. `HologramAR.fx.glitch = 2` or `HologramAR.setTheme(2)`.
+`STYLES`, `FX`); `vision.js` holds the detector, the object tracker and the frame statistics
+(`HoloVision.settings` for the run interval and score threshold). Everything is exposed at runtime
+as `window.HologramAR` so you can experiment from the browser console, e.g. `HologramAR.fx.glitch = 2`,
+`HologramAR.setTheme(2)` or `HologramAR.vision.settings.minScore = 0.3`.
 
 ## Files
 
 ```
 index.html               markup
-style.css                start screen and HUD styling
+style.css                start screen, HUD and scan panel styling
 shaders.js               WebGL shader sources
 app.js                   camera, render loop, capture, recording, UI
+vision.js                on-device object detection, tracking, frame statistics
+vendor/                  TensorFlow.js, coco-ssd and the quantized detector weights (see vendor/README.md)
+tools/quantize-model.mjs re-packs TF.js weights as 8-bit (how vendor/coco-ssd-lite was made)
 manifest.webmanifest     PWA manifest (icon.svg, icon-*.png)
 .github/workflows/       GitHub Pages deployment
 ```

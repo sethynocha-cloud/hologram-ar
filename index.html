@@ -26,14 +26,24 @@
     <h1 class="holo-title">HOLOGRAM<span>AR</span></h1>
     <p class="tagline">Point your camera at anything. It becomes a hologram.</p>
     <button id="startBtn" class="primary" type="button">ACTIVATE CAMERA</button>
-    <p class="hint">Best on a phone. Your camera feed stays on your device &mdash; nothing is uploaded.</p>
+    <p class="hint">Best on a phone. Your camera feed stays on your device &mdash; nothing is uploaded. Object recognition runs on the phone too.</p>
     <p id="error" class="error" hidden></p>
   </section>
 
   <!-- Heads-up display shown while the camera runs -->
   <div id="hud" hidden>
+    <div id="targets" aria-hidden="true"></div>
     <div class="top-bar">
-      <div id="status" class="status"><span class="dot"></span><span id="statusText">LIVE</span></div>
+      <div id="scan" class="scan" aria-live="polite">
+        <div class="scan-head"><span class="dot"></span><span id="statusText">LIVE</span><span id="visionState" class="scan-state"></span></div>
+        <ul id="objects" class="scan-objects" hidden></ul>
+        <div class="scan-stats">
+          <div class="stat"><span class="stat-name">Light</span><span class="bar"><b id="statLight"></b></span><span class="stat-val" id="statLightV">--</span></div>
+          <div class="stat"><span class="stat-name">Motion</span><span class="bar"><b id="statMotion"></b></span><span class="stat-val" id="statMotionV">--</span></div>
+          <div class="stat"><span class="stat-name">Detail</span><span class="bar"><b id="statDetail"></b></span><span class="stat-val" id="statDetailV">--</span></div>
+          <div class="stat"><span class="stat-name">Tone</span><span class="stat-val stat-tone" id="statTone">--</span></div>
+        </div>
+      </div>
       <div class="top-actions">
         <button id="flipBtn" class="icon-btn" type="button" aria-label="Switch camera" title="Switch camera">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -82,6 +92,7 @@
   <div id="flash" aria-hidden="true"></div>
 
   <script src="shaders.js"></script>
+  <script src="vision.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

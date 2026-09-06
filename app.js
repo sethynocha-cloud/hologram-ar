@@ -5,7 +5,10 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     video: $('video'), canvas: $('view'), start: $('start'), startBtn: $('startBtn'),
-    error: $('error'), hud: $('hud'), status: $('status'), statusText: $('statusText'),
+    error: $('error'), hud: $('hud'), scan: $('scan'), statusText: $('statusText'),
+    visionState: $('visionState'), objects: $('objects'), targets: $('targets'),
+    statLight: $('statLight'), statLightV: $('statLightV'), statMotion: $('statMotion'), statMotionV: $('statMotionV'),
+    statDetail: $('statDetail'), statDetailV: $('statDetailV'), statTone: $('statTone'),
     flipBtn: $('flipBtn'), fsBtn: $('fsBtn'), themeBtn: $('themeBtn'), themeLbl: $('themeLbl'),
     styleBtn: $('styleBtn'), styleLbl: $('styleLbl'), snapBtn: $('snapBtn'), recBtn: $('recBtn'),
     recLbl: $('recLbl'), toast: $('toast'), flash: $('flash'),
@@ -33,8 +36,8 @@
 
   const state = {
     running: false, theme: 0, style: 0, facing: 'environment', mirror: false,
-    stream: null, deviceIds: [], deviceIndex: -1, quality: 1, t0: 0,
-    recorder: null, recChunks: [], recTimer: 0, recStart: 0, wakeLock: null,
+    stream: null, deviceIds: [], deviceIndex: -1, quality: 1, t0: 0, cover: [1, 1],
+    recorder: null, recChunks: [], recTimer: 0, recStart: 0, wakeLock: null, recCanvas: null, recCtx: null,
   };
 
   /* ---------------- WebGL ---------------- */
@@ -190,6 +193,7 @@
     // "Cover" crop so the camera fills the screen without stretching.
     const ca = w / h, va = vidW / vidH;
     const coverX = Math.min(1, ca / va), coverY = Math.min(1, va / ca);
+    state.cover[0] = coverX; state.cover[1] = coverY;
     const mirror = state.mirror ? 1 : 0;
 
     // 1. Half-res, box-filtered luminance in camera space.
@@ -278,7 +282,7 @@
       }
     }
     lastFrame = now;
-    render(now);
+    if (render(now) && state.recCanvas) composeFrame(state.recCtx, state.recCanvas.width, state.recCanvas.height);
   }
 
   /* ---------------- Camera ---------------- */
@@ -438,10 +442,160 @@
     els.flash.classList.remove('go');
     void els.flash.offsetWidth;
     els.flash.classList.add('go');
-    els.canvas.toBlob((blob) => {
+    const out = document.createElement('canvas');
+    out.width = els.canvas.width;
+    out.height = els.canvas.height;
+    composeFrame(out.getContext('2d'), out.width, out.height);
+    out.toBlob((blob) => {
       if (!blob) { toast('Capture failed'); return; }
       deliver(new File([blob], `hologram-${stamp()}.png`, { type: 'image/png' }), 'Hologram');
     }, 'image/png');
+  }
+
+  /* ---------------- Scene readout (vision.js) ---------------- */
+
+  const targetEls = new Map();
+
+  // Video-space box [x0, y0, x1, y1] (0..1) -> CSS pixel rect, through the cover crop and mirror.
+  function boxToScreen(box) {
+    const W = els.canvas.clientWidth, H = els.canvas.clientHeight;
+    const [cx, cy] = state.cover;
+    let x0 = box[0], x1 = box[2];
+    if (state.mirror) { const a = 1 - x1; x1 = 1 - x0; x0 = a; }
+    const sx0 = ((x0 - 0.5) / cx + 0.5) * W, sx1 = ((x1 - 0.5) / cx + 0.5) * W;
+    const sy0 = ((box[1] - 0.5) / cy + 0.5) * H, sy1 = ((box[3] - 0.5) / cy + 0.5) * H;
+    return { x: sx0, y: sy0, w: sx1 - sx0, h: sy1 - sy0 };
+  }
+
+  function objectLabel(o) {
+    return `${o.label.toUpperCase()} ${Math.round(o.score * 100)}%`;
+  }
+
+  function visionStatusText(v) {
+    const n = v.objects.length;
+    switch (v.status) {
+      case 'loading': return 'VISION · LOADING';
+      case 'warming': return 'VISION · CALIBRATING';
+      case 'ready': return n ? `VISION · ${n} OBJECT${n > 1 ? 'S' : ''}` : 'VISION · SCANNING';
+      case 'error': return 'VISION · OFFLINE';
+      case 'off': return 'VISION · OFF';
+      default: return '';
+    }
+  }
+
+  function layoutTargets() {
+    const v = HoloVision.state;
+    const seen = new Set();
+    for (const o of v.objects) {
+      let el = targetEls.get(o.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'target';
+        el.appendChild(document.createElement('span')).className = 'tag';
+        els.targets.appendChild(el);
+        targetEls.set(o.id, el);
+      }
+      seen.add(o.id);
+      const r = boxToScreen(o.box);
+      el.style.transform = `translate(${r.x.toFixed(1)}px, ${r.y.toFixed(1)}px)`;
+      el.style.width = `${Math.max(8, r.w).toFixed(1)}px`;
+      el.style.height = `${Math.max(8, r.h).toFixed(1)}px`;
+      el.style.setProperty('--corner', `${Math.max(8, Math.min(22, Math.min(r.w, r.h) * 0.22)).toFixed(0)}px`);
+      // Keep the label readable when the box runs off the left or top edge.
+      el.firstChild.style.left = `${Math.max(0, -r.x).toFixed(0)}px`;
+      el.classList.toggle('inside', r.y < 26);
+      el.firstChild.textContent = objectLabel(o);
+    }
+    for (const [id, el] of targetEls) {
+      if (!seen.has(id)) { el.remove(); targetEls.delete(id); }
+    }
+  }
+
+  function renderVision(v) {
+    els.visionState.textContent = visionStatusText(v);
+    els.visionState.classList.toggle('busy', v.status === 'loading' || v.status === 'warming' || (v.status === 'ready' && !v.objects.length));
+    els.objects.textContent = '';
+    for (const o of v.objects) {
+      const li = document.createElement('li');
+      const name = li.appendChild(document.createElement('span'));
+      name.className = 'obj-name';
+      name.textContent = o.label;
+      const bar = li.appendChild(document.createElement('span'));
+      bar.className = 'bar';
+      bar.appendChild(document.createElement('b')).style.width = `${Math.round(o.score * 100)}%`;
+      const score = li.appendChild(document.createElement('span'));
+      score.className = 'obj-score';
+      score.textContent = `${Math.round(o.score * 100)}%`;
+      els.objects.appendChild(li);
+    }
+    els.objects.hidden = v.objects.length === 0;
+    const st = v.stats;
+    els.statLight.style.width = `${st.light}%`; els.statLightV.textContent = `${st.light}%`;
+    els.statMotion.style.width = `${st.motion}%`; els.statMotionV.textContent = `${st.motion}%`;
+    els.statDetail.style.width = `${st.detail}%`; els.statDetailV.textContent = `${st.detail}%`;
+    els.statTone.textContent = st.tone;
+    if (v.status === 'error' && !renderVision.warned) {
+      renderVision.warned = true;
+      toast('Object recognition unavailable here', 2600);
+    }
+    layoutTargets();
+  }
+
+  function accentColor() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#34e0ff';
+  }
+
+  // Draws the hologram plus (unless the HUD is hidden) the brackets and readout into a 2D context.
+  function composeFrame(ctx, W, H) {
+    ctx.drawImage(els.canvas, 0, 0, W, H);
+    if (document.body.classList.contains('hud-hidden') || !state.running) return;
+    const k = W / Math.max(1, els.canvas.clientWidth);
+    const v = HoloVision.state;
+    const accent = accentColor();
+    const mono = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    ctx.save();
+    ctx.lineWidth = 2 * k;
+    ctx.strokeStyle = accent;
+    ctx.font = `bold ${Math.round(10 * k)}px ${mono}`;
+    ctx.textBaseline = 'alphabetic';
+    for (const o of v.objects) {
+      const r = boxToScreen(o.box);
+      const x = r.x * k, y = r.y * k, w = r.w * k, h = r.h * k;
+      const L = Math.max(8, Math.min(22, Math.min(r.w, r.h) * 0.22)) * k;
+      ctx.beginPath();
+      ctx.moveTo(x, y + L); ctx.lineTo(x, y); ctx.lineTo(x + L, y);
+      ctx.moveTo(x + w - L, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + L);
+      ctx.moveTo(x + w, y + h - L); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - L, y + h);
+      ctx.moveTo(x + L, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - L);
+      ctx.stroke();
+      const text = objectLabel(o);
+      const tw = ctx.measureText(text).width + 12 * k, th = 16 * k;
+      const tx = Math.max(0, x), ty = y - th - 3 * k < 0 ? y + 3 * k : y - th - 3 * k;
+      ctx.fillStyle = 'rgba(2, 5, 10, 0.75)';
+      ctx.fillRect(tx, ty, tw, th);
+      ctx.fillStyle = accent;
+      ctx.fillText(text, tx + 6 * k, ty + th - 5 * k);
+    }
+    // Readout block, where the panel sits on screen.
+    const rect = els.scan.getBoundingClientRect();
+    const lines = [`● ${els.statusText.textContent}   ${visionStatusText(v)}`];
+    for (const o of v.objects) lines.push(`▸ ${objectLabel(o)}`);
+    const st = v.stats;
+    lines.push(`LIGHT ${st.light}%  MOTION ${st.motion}%  DETAIL ${st.detail}%`);
+    lines.push(`TONE ${st.tone}`);
+    const pad = 8 * k, lh = 14 * k;
+    let bw = 0;
+    for (const l of lines) bw = Math.max(bw, ctx.measureText(l).width);
+    bw += pad * 2;
+    const bx = rect.left * k, by = rect.top * k, bh = lines.length * lh + pad * 2 - 4 * k;
+    ctx.fillStyle = 'rgba(2, 5, 10, 0.7)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1 * k;
+    ctx.strokeRect(bx + 0.5 * k, by + 0.5 * k, bw - k, bh - k);
+    ctx.fillStyle = accent;
+    lines.forEach((l, i) => ctx.fillText(l, bx + pad, by + pad + lh * (i + 1) - 4 * k));
+    ctx.restore();
   }
 
   /* ---------------- Recording ---------------- */
@@ -458,21 +612,28 @@
 
   function setRecordingUi(on) {
     els.recBtn.classList.toggle('rec-on', on);
-    els.status.classList.toggle('rec', on);
+    els.scan.classList.toggle('rec', on);
     els.recLbl.textContent = on ? 'Stop' : 'Record';
     els.statusText.textContent = on ? 'REC 0:00' : 'LIVE';
   }
 
   function startRecording() {
     let recorder, stream;
+    const rc = document.createElement('canvas');
+    rc.width = els.canvas.width;
+    rc.height = els.canvas.height;
+    const rctx = rc.getContext('2d');
     try {
-      stream = els.canvas.captureStream(30);
+      composeFrame(rctx, rc.width, rc.height);
+      stream = rc.captureStream(30);
       const mime = pickMime();
       recorder = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8e6 } : undefined);
     } catch (err) {
       toast('Recording is not supported here');
       return;
     }
+    state.recCanvas = rc;
+    state.recCtx = rctx;
     state.recChunks = [];
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) state.recChunks.push(e.data); };
     recorder.onstop = () => {
@@ -482,6 +643,8 @@
       const chunks = state.recChunks;
       state.recChunks = [];
       state.recorder = null;
+      state.recCanvas = null;
+      state.recCtx = null;
       clearInterval(state.recTimer);
       setRecordingUi(false);
       if (!chunks.length) { toast('Nothing was recorded'); return; }
@@ -560,7 +723,11 @@
     els.hud.hidden = false;
     keepAwake();
     toast('Tap the screen to hide controls', 2600);
+    HoloVision.start(els.video);
   }
+
+  HoloVision.onUpdate(renderVision);
+  window.addEventListener('resize', layoutTargets);
 
   els.startBtn.addEventListener('click', start);
   els.flipBtn.addEventListener('click', flipCamera);
@@ -596,7 +763,7 @@
 
   // Small public surface for tinkering from the console (or automated tests).
   window.HologramAR = {
-    start, capture, render, state, themes: THEMES, styles: STYLES, fx: FX,
+    start, capture, render, state, themes: THEMES, styles: STYLES, fx: FX, vision: HoloVision,
     setTheme(i) { state.theme = ((i % THEMES.length) + THEMES.length) % THEMES.length; applyTheme(); },
     setStyle(i) { state.style = ((i % STYLES.length) + STYLES.length) % STYLES.length; applyStyle(); },
   };

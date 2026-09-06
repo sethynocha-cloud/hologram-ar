@@ -171,20 +171,101 @@ body.hud-hidden #hud button { pointer-events: none; }
   align-items: center;
 }
 
-.status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 999px;
+.top-bar { align-items: flex-start; }
+
+/* Scan panel: live readout of what the camera sees. */
+.scan {
+  width: min(62vw, 250px);
+  padding: 8px 10px 9px;
+  border-radius: 14px;
+  border: 1px solid var(--accent-line);
   background: var(--panel);
-  font-size: 11px;
-  letter-spacing: 0.22em;
   color: var(--accent);
-  text-shadow: 0 0 8px var(--accent);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(52, 224, 255, 0.5);
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
 }
+
+.scan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  white-space: nowrap;
+}
+
+.scan-state {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-state.busy::after {
+  content: "_";
+  animation: blink 0.9s steps(2, start) infinite;
+}
+
+.scan-objects {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--accent-line);
+}
+
+.scan-objects li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.scan-objects .obj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
+.scan-objects .obj-score { text-align: right; }
+
+.bar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.bar b {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  transition: width 0.35s ease-out;
+}
+
+.scan-stats {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--accent-line);
+  display: grid;
+  gap: 4px;
+}
+
+.stat {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+}
+
+.stat-name { opacity: 0.8; }
+.stat-val { text-align: right; font-variant-numeric: tabular-nums; }
+.stat-tone { grid-column: 2 / 4; color: #fff; }
 
 .dot {
   width: 8px;
@@ -193,10 +274,59 @@ body.hud-hidden #hud button { pointer-events: none; }
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent);
   animation: pulse 1.6s ease-in-out infinite;
+  flex: none;
 }
 
-.status.rec { color: var(--rec); text-shadow: 0 0 8px var(--rec); }
-.status.rec .dot { background: var(--rec); box-shadow: 0 0 8px var(--rec); animation-duration: 0.9s; }
+.scan.rec .scan-head { color: var(--rec); text-shadow: 0 0 8px var(--rec); }
+.scan.rec .dot { background: var(--rec); box-shadow: 0 0 8px var(--rec); animation-duration: 0.9s; }
+
+/* Target brackets drawn over recognised objects. */
+#targets {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.target {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  transition: transform 0.3s ease-out, width 0.3s ease-out, height 0.3s ease-out;
+  --corner: 18px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) top left / var(--corner) 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) top left / 2px var(--corner) no-repeat,
+    linear-gradient(var(--accent), var(--accent)) top right / var(--corner) 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) top right / 2px var(--corner) no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom left / var(--corner) 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom left / 2px var(--corner) no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom right / var(--corner) 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom right / 2px var(--corner) no-repeat;
+  filter: drop-shadow(0 0 4px var(--accent));
+  animation: lock 0.35s ease-out;
+}
+
+.target .tag {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(2, 5, 10, 0.75);
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.target.inside .tag { bottom: auto; top: 0; margin: 3px 0 0; }
+
+@keyframes lock { from { transform: scale(1.15); opacity: 0; } }
+@keyframes blink { to { visibility: hidden; } }
 
 .top-actions { display: flex; gap: 10px; }
 

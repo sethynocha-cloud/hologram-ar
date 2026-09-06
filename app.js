@@ -330,7 +330,10 @@
 
   /* ---------------- Camera ---------------- */
 
+  let cameraGen = 0;
+
   function stopCamera() {
+    cameraGen++; // any acquisition still in flight is discarded when it resolves
     if (state.stream) state.stream.getTracks().forEach((tr) => tr.stop());
     state.stream = null;
   }
@@ -341,6 +344,7 @@
 
   async function startCamera(preferred, assumedFacing) {
     stopCamera();
+    const gen = cameraGen;
     const base = { width: { ideal: 1280 }, height: { ideal: 720 } };
     let stream;
     try {
@@ -351,6 +355,13 @@
       } else {
         throw err;
       }
+    }
+    // Stopped or hidden while the camera was starting: do not let it go live.
+    if (gen !== cameraGen || (document.visibilityState === 'hidden' && !state.sharing)) {
+      stream.getTracks().forEach((tr) => tr.stop());
+      const err = new Error('Camera start cancelled');
+      err.cancelled = true;
+      throw err;
     }
     state.stream = stream;
     els.video.srcObject = stream;
@@ -469,7 +480,10 @@
       } catch (err) {
         if (err && err.name === 'AbortError') return; // user closed the share sheet
       } finally {
-        setTimeout(() => { state.sharing = false; }, 1000);
+        setTimeout(() => {
+          state.sharing = false;
+          if (document.visibilityState === 'hidden') pauseForBackground();
+        }, 1000);
       }
     }
     const url = URL.createObjectURL(file);
@@ -818,7 +832,7 @@
       if (!progs) initGL();
       await startCamera({ facingMode: { ideal: state.facing } }, state.facing);
     } catch (err) {
-      showError(describeError(err));
+      if (!(err && err.cancelled)) showError(describeError(err));
       els.startBtn.disabled = false;
       return;
     }
@@ -869,11 +883,20 @@
     if (msg) showError(msg, true);
   }
 
+  function pauseForBackground() {
+    if (!state.running || pausedByBackground) return;
+    pausedByBackground = true;
+    stopRolling();
+    HoloVision.stop();
+    stopCamera();
+  }
+
   async function resumeFromBackground() {
     pausedByBackground = false;
     try {
       await startCamera({ facingMode: { ideal: state.facing } }, state.facing);
     } catch (err) {
+      if (err && err.cancelled) { pausedByBackground = true; return; } // hidden again; wait for the next return
       shutdown('The camera was turned off while the app was in the background. Tap Activate to resume.');
       return;
     }
@@ -886,11 +909,7 @@
   // since it hides the page for a moment.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      if (!state.running || state.sharing) return;
-      pausedByBackground = true;
-      stopRolling();
-      HoloVision.stop();
-      stopCamera();
+      if (!state.sharing) pauseForBackground();
       return;
     }
     if (!state.running) return;

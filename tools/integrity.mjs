@@ -1,5 +1,5 @@
-// Prints the SHA-384 hashes pinned in vision.js for the vendored detector files.
-// Run after changing anything under vendor/ and paste the values into vision.js.
+// Prints the SHA-384 integrity strings pinned in vision.js for the vendored detector files.
+// Run after changing anything under vendor/ and paste the values into SCRIPTS / MODEL_FILES.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';

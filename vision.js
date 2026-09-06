@@ -15,9 +15,9 @@
     { src: 'vendor/coco-ssd.min.js', integrity: 'sha384-7qLdgfEQyO9ZQi9ArRHigK+IBto4XPk468jAqc+fnsXaZIcMAhQeLwzggRK7aESl', ready: () => window.cocoSsd },
   ];
   const MODEL_FILES = [
-    { path: 'vendor/coco-ssd-lite/model.json', sha384: 'GDq1qierYfWAP95LegcOyjByNJbDzrcPugOfSfcyMCvVD37r3ndOoQe8JOOa+qb/' },
-    { path: 'vendor/coco-ssd-lite/group1-shard1of2.bin', sha384: '6Lnby+REfsp8DqJODr/s3q8vRbVK/INiJzI73EFd6YHsxPeAFwPTrR293HTCXWQH' },
-    { path: 'vendor/coco-ssd-lite/group1-shard2of2.bin', sha384: 'Fa2eZaZLVp32YCfLyh1DYH7g6dKe50tK+oK5kFzQgASy/axn51kkPht4Zt2iZeg+' },
+    { path: 'vendor/coco-ssd-lite/model.json', integrity: 'sha384-GDq1qierYfWAP95LegcOyjByNJbDzrcPugOfSfcyMCvVD37r3ndOoQe8JOOa+qb/' },
+    { path: 'vendor/coco-ssd-lite/group1-shard1of2.bin', integrity: 'sha384-6Lnby+REfsp8DqJODr/s3q8vRbVK/INiJzI73EFd6YHsxPeAFwPTrR293HTCXWQH' },
+    { path: 'vendor/coco-ssd-lite/group1-shard2of2.bin', integrity: 'sha384-Fa2eZaZLVp32YCfLyh1DYH7g6dKe50tK+oK5kFzQgASy/axn51kkPht4Zt2iZeg+' },
   ];
 
   const settings = {
@@ -50,7 +50,15 @@
   function emit() { listeners.forEach((fn) => { try { fn(state); } catch (err) { /* listener error */ } }); }
   function setStatus(status, error) { state.status = status; state.error = error || null; emit(); }
 
-  // Subresource Integrity: the browser refuses the script unless its hash matches.
+  async function sha384(buf) {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-384', buf));
+    let bin = '';
+    for (let i = 0; i < digest.length; i++) bin += String.fromCharCode(digest[i]);
+    return 'sha384-' + btoa(bin);
+  }
+
+  // Subresource Integrity: the browser refuses the script unless its hash matches. On failure,
+  // hash the file ourselves to tell a tampered file (blocked) from a network problem (offline).
   function loadScript(entry) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -59,9 +67,14 @@
       s.crossOrigin = 'anonymous';
       s.async = true;
       s.onload = resolve;
-      s.onerror = () => {
-        const err = new Error('Blocked or failed to load ' + entry.src);
-        err.integrity = true;
+      s.onerror = async () => {
+        let tampered = false;
+        try {
+          const res = await fetch(entry.src);
+          tampered = res.ok && (await sha384(await res.arrayBuffer())) !== entry.integrity;
+        } catch (err) { /* unreachable: treat as offline */ }
+        const err = new Error((tampered ? 'Integrity check failed for ' : 'Could not load ') + entry.src);
+        err.integrity = tampered;
         reject(err);
       };
       document.head.appendChild(s);
@@ -73,10 +86,7 @@
     const res = await fetch(entry.path);
     if (!res.ok) throw new Error('Could not fetch ' + entry.path);
     const buf = await res.arrayBuffer();
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-384', buf));
-    let bin = '';
-    for (let i = 0; i < digest.length; i++) bin += String.fromCharCode(digest[i]);
-    if (btoa(bin) !== entry.sha384) {
+    if ((await sha384(buf)) !== entry.integrity) {
       const err = new Error('Integrity check failed for ' + entry.path);
       err.integrity = true;
       throw err;

@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#02050a">
   <meta name="color-scheme" content="dark">
@@ -26,7 +28,7 @@
     <h1 class="holo-title">HOLOGRAM<span>AR</span></h1>
     <p class="tagline">Point your camera at anything. It becomes a hologram.</p>
     <button id="startBtn" class="primary" type="button">ACTIVATE CAMERA</button>
-    <p class="hint">Best on a phone. Your camera feed stays on your device &mdash; nothing is uploaded. Object recognition runs on the phone too.</p>
+    <p class="hint">Runs entirely on this device: camera frames go straight to the screen, recognition uses a bundled model, and clips wait in memory only until you save them. Nothing is uploaded, no account, no tracking. The camera turns off whenever the app leaves the screen.</p>
     <p id="error" class="error" hidden></p>
   </section>
 
@@ -45,6 +47,11 @@
         </div>
       </div>
       <div class="top-actions">
+        <button id="stopBtn" class="icon-btn" type="button" aria-label="Stop camera" title="Stop camera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 3v8"/><path d="M6.6 6.6a7.6 7.6 0 1 0 10.8 0"/>
+          </svg>
+        </button>
         <button id="flipBtn" class="icon-btn" type="button" aria-label="Switch camera" title="Switch camera">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 12a8 8 0 0 1 13.5-5.8"/><path d="M17.5 3v3.5H14"/>

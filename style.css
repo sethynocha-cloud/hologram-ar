@@ -146,6 +146,12 @@ button.primary:disabled { opacity: 0.5; }
   line-height: 1.5;
 }
 
+.error.note {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
 /* ---------- HUD ---------- */
 
 #hud {

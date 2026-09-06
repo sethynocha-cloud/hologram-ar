@@ -9,7 +9,7 @@
     visionState: $('visionState'), objects: $('objects'), targets: $('targets'),
     statLight: $('statLight'), statLightV: $('statLightV'), statMotion: $('statMotion'), statMotionV: $('statMotionV'),
     statDetail: $('statDetail'), statDetailV: $('statDetailV'), statTone: $('statTone'),
-    flipBtn: $('flipBtn'), fsBtn: $('fsBtn'), themeBtn: $('themeBtn'), themeLbl: $('themeLbl'),
+    flipBtn: $('flipBtn'), fsBtn: $('fsBtn'), stopBtn: $('stopBtn'), themeBtn: $('themeBtn'), themeLbl: $('themeLbl'),
     styleBtn: $('styleBtn'), styleLbl: $('styleLbl'), snapBtn: $('snapBtn'), recBtn: $('recBtn'),
     recLbl: $('recLbl'), toast: $('toast'), flash: $('flash'),
   };
@@ -38,8 +38,12 @@
   const state = {
     running: false, theme: 0, style: 0, facing: 'environment', mirror: false,
     stream: null, deviceIds: [], deviceIndex: -1, quality: 1, t0: 0, cover: [1, 1],
-    wakeLock: null, accent: '#34e0ff',
+    wakeLock: null, accent: '#34e0ff', sharing: false,
   };
+
+  // Clickjacking defence: a page that embeds this app could overlay it and trick a tap on
+  // "Activate Camera". Refuse to run anywhere but the top-level window.
+  const framed = (() => { try { return window.top !== window.self; } catch (err) { return true; } })();
 
   /* ---------------- WebGL ---------------- */
 
@@ -427,8 +431,9 @@
     toastTimer = setTimeout(() => els.toast.classList.remove('show'), ms || 1800);
   }
 
-  function showError(msg) {
+  function showError(msg, note) {
     els.error.textContent = msg;
+    els.error.classList.toggle('note', !!note);
     els.error.hidden = false;
   }
 
@@ -457,11 +462,14 @@
     if (navigator.canShare && navigator.share) {
       try {
         if (navigator.canShare({ files: [file] })) {
+          state.sharing = true;
           await navigator.share({ files: [file], title });
           return;
         }
       } catch (err) {
         if (err && err.name === 'AbortError') return; // user closed the share sheet
+      } finally {
+        setTimeout(() => { state.sharing = false; }, 1000);
       }
     }
     const url = URL.createObjectURL(file);
@@ -518,6 +526,7 @@
       case 'warming': return 'VISION · CALIBRATING';
       case 'ready': return n ? `VISION · ${n} OBJECT${n > 1 ? 'S' : ''}` : 'VISION · SCANNING';
       case 'error': return 'VISION · OFFLINE';
+      case 'blocked': return 'VISION · BLOCKED';
       case 'off': return 'VISION · OFF';
       default: return '';
     }
@@ -574,9 +583,9 @@
     els.statMotion.style.width = `${st.motion}%`; els.statMotionV.textContent = `${st.motion}%`;
     els.statDetail.style.width = `${st.detail}%`; els.statDetailV.textContent = `${st.detail}%`;
     els.statTone.textContent = st.tone;
-    if (v.status === 'error' && !renderVision.warned) {
+    if ((v.status === 'error' || v.status === 'blocked') && !renderVision.warned) {
       renderVision.warned = true;
-      toast('Object recognition unavailable here', 2600);
+      toast(v.status === 'blocked' ? 'Vision model failed its integrity check and was not loaded' : 'Object recognition unavailable here', 3200);
     }
     layoutTargets();
   }
@@ -792,8 +801,10 @@
   /* ---------------- Start ---------------- */
 
   async function start() {
+    if (framed) return;
     els.error.hidden = true;
     els.startBtn.disabled = true;
+    pausedByBackground = false;
     if (!gl) {
       showError('WebGL is not available in this browser, and the hologram needs it.');
       return;
@@ -836,11 +847,59 @@
   if (!canRecord) els.recBtn.hidden = true;
   if (!fsSupported) els.fsBtn.hidden = true;
 
+  /* ---------------- Stop / background ---------------- */
+
+  let pausedByBackground = false;
+
+  // Turns everything off: camera, recognition, clip buffer, wake lock. Footage is discarded.
+  function shutdown(msg) {
+    stopRolling();
+    HoloVision.stop();
+    stopCamera();
+    state.running = false;
+    pausedByBackground = false;
+    smoothRects.clear();
+    for (const el of targetEls.values()) el.remove();
+    targetEls.clear();
+    if (state.wakeLock) { state.wakeLock.release().catch(() => {}); state.wakeLock = null; }
+    document.body.classList.remove('hud-hidden');
+    els.hud.hidden = true;
+    els.start.hidden = false;
+    els.startBtn.disabled = false;
+    if (msg) showError(msg, true);
+  }
+
+  async function resumeFromBackground() {
+    pausedByBackground = false;
+    try {
+      await startCamera({ facingMode: { ideal: state.facing } }, state.facing);
+    } catch (err) {
+      shutdown('The camera was turned off while the app was in the background. Tap Activate to resume.');
+      return;
+    }
+    HoloVision.start(els.video);
+    startRolling();
+    keepAwake();
+  }
+
+  // Privacy: nothing stays live while the app is off screen. The share sheet is the exception,
+  // since it hides the page for a moment.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || !state.running) return;
+    if (document.visibilityState === 'hidden') {
+      if (!state.running || state.sharing) return;
+      pausedByBackground = true;
+      stopRolling();
+      HoloVision.stop();
+      stopCamera();
+      return;
+    }
+    if (!state.running) return;
+    if (pausedByBackground) { resumeFromBackground(); return; }
     keepAwake();
     els.video.play().catch(() => {});
   });
+
+  els.stopBtn.addEventListener('click', () => shutdown('Camera off. Nothing was kept.'));
 
   window.addEventListener('keydown', (e) => {
     if (!state.running || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -850,7 +909,13 @@
     else if ((e.key === 'r' || e.key === 'R') && !els.recBtn.hidden) els.recBtn.click();
     else if ((e.key === 'f' || e.key === 'F') && !els.flipBtn.hidden) els.flipBtn.click();
     else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('hud-hidden');
+    else if (e.key === 'Escape') shutdown('Camera off. Nothing was kept.');
   });
+
+  if (framed) {
+    els.startBtn.disabled = true;
+    showError('For your safety this app only runs when opened directly, not inside another site. Open the link in your browser.');
+  }
 
   applyTheme();
   applyStyle();
@@ -858,7 +923,7 @@
 
   // Small public surface for tinkering from the console (or automated tests).
   window.HologramAR = {
-    start, capture, render, state, themes: THEMES, styles: STYLES, fx: FX, vision: HoloVision, saveClip, bufferedSeconds,
+    start, stop: shutdown, capture, render, state, themes: THEMES, styles: STYLES, fx: FX, vision: HoloVision, saveClip, bufferedSeconds,
     setTheme(i) { state.theme = ((i % THEMES.length) + THEMES.length) % THEMES.length; applyTheme(); },
     setStyle(i) { state.style = ((i % STYLES.length) + STYLES.length) % STYLES.length; applyStyle(); },
   };

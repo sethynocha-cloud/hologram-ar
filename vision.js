@@ -8,11 +8,17 @@
 (function () {
   'use strict';
 
+  // Everything the detector runs or loads is pinned by hash. If a file does not match, it is
+  // not used. Regenerate these after changing anything in vendor/: node tools/integrity.mjs
   const SCRIPTS = [
-    { src: 'vendor/tf.min.js', ready: () => window.tf },
-    { src: 'vendor/coco-ssd.min.js', ready: () => window.cocoSsd },
+    { src: 'vendor/tf.es2017.min.js', integrity: 'sha384-ODzrY1mCTIRZRerZfDIqCoTQafA1St1OwLVc9SsTefnkCF1MeIaVSZ88wuK/NKfH', ready: () => window.tf },
+    { src: 'vendor/coco-ssd.min.js', integrity: 'sha384-7qLdgfEQyO9ZQi9ArRHigK+IBto4XPk468jAqc+fnsXaZIcMAhQeLwzggRK7aESl', ready: () => window.cocoSsd },
   ];
-  const MODEL_URL = 'vendor/coco-ssd-lite/model.json';
+  const MODEL_FILES = [
+    { path: 'vendor/coco-ssd-lite/model.json', sha384: 'GDq1qierYfWAP95LegcOyjByNJbDzrcPugOfSfcyMCvVD37r3ndOoQe8JOOa+qb/' },
+    { path: 'vendor/coco-ssd-lite/group1-shard1of2.bin', sha384: '6Lnby+REfsp8DqJODr/s3q8vRbVK/INiJzI73EFd6YHsxPeAFwPTrR293HTCXWQH' },
+    { path: 'vendor/coco-ssd-lite/group1-shard2of2.bin', sha384: 'Fa2eZaZLVp32YCfLyh1DYH7g6dKe50tK+oK5kFzQgASy/axn51kkPht4Zt2iZeg+' },
+  ];
 
   const settings = {
     interval: 450,     // ms gap between detector runs (the GPU is shared with the hologram)
@@ -24,7 +30,7 @@
   };
 
   const state = {
-    status: 'idle',    // idle | loading | warming | ready | error | off
+    status: 'idle',    // idle | loading | warming | ready | error | blocked | off
     objects: [],       // [{ id, label, score, box: [x0, y0, x1, y1] normalised to the video frame }]
     stats: { light: 0, motion: 0, detail: 0, tone: '--', fps: 0 },
     error: null,
@@ -44,25 +50,50 @@
   function emit() { listeners.forEach((fn) => { try { fn(state); } catch (err) { /* listener error */ } }); }
   function setStatus(status, error) { state.status = status; state.error = error || null; emit(); }
 
-  function loadScript(src) {
+  // Subresource Integrity: the browser refuses the script unless its hash matches.
+  function loadScript(entry) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = src;
+      s.src = entry.src;
+      s.integrity = entry.integrity;
+      s.crossOrigin = 'anonymous';
       s.async = true;
       s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load ' + src));
+      s.onerror = () => {
+        const err = new Error('Blocked or failed to load ' + entry.src);
+        err.integrity = true;
+        reject(err);
+      };
       document.head.appendChild(s);
     });
+  }
+
+  // Fetches a model file and checks its SHA-384 before it is handed to TF.js.
+  async function fetchVerified(entry) {
+    const res = await fetch(entry.path);
+    if (!res.ok) throw new Error('Could not fetch ' + entry.path);
+    const buf = await res.arrayBuffer();
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-384', buf));
+    let bin = '';
+    for (let i = 0; i < digest.length; i++) bin += String.fromCharCode(digest[i]);
+    if (btoa(bin) !== entry.sha384) {
+      const err = new Error('Integrity check failed for ' + entry.path);
+      err.integrity = true;
+      throw err;
+    }
+    const name = entry.path.split('/').pop();
+    return new File([buf], name, { type: name.slice(-5) === '.json' ? 'application/json' : 'application/octet-stream' });
   }
 
   async function ensureModel() {
     if (model) return model;
     setStatus('loading');
-    for (const s of SCRIPTS) if (!s.ready()) await loadScript(s.src);
+    for (const s of SCRIPTS) if (!s.ready()) await loadScript(s);
     if (tf.enableProdMode) tf.enableProdMode();
     try { await tf.setBackend('webgl'); } catch (err) { /* falls back to whatever tf picks */ }
     await tf.ready();
-    model = await cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: MODEL_URL });
+    const files = await Promise.all(MODEL_FILES.map(fetchVerified));
+    model = await cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: tf.io.browserFiles(files) });
     setStatus('warming');
     return model;
   }
@@ -198,8 +229,8 @@
     try {
       await ensureModel();
     } catch (err) {
-      // No detector (offline, old browser): keep the frame statistics running anyway.
-      setStatus('error', err);
+      // No detector (tampered file, offline, old browser): keep the frame statistics running anyway.
+      setStatus(err && err.integrity ? 'blocked' : 'error', err);
     }
     if (running) schedule(0);
   }
@@ -209,6 +240,7 @@
     clearTimeout(timer);
     timer = 0;
     tracks.length = 0;
+    prevLuma = null;
     state.objects = [];
     setStatus(model ? 'off' : 'idle');
   }

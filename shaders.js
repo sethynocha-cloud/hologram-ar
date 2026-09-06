@@ -138,6 +138,10 @@ uniform vec3  uTint;
 uniform vec3  uEdgeTint;
 uniform float uSpectrum;
 uniform float uRealMix;
+uniform float uRealSat;
+uniform float uReveal;
+uniform vec4  uBoxes[6];
+uniform int   uBoxCount;
 uniform float uBloomAmt;
 uniform float uGlitch;
 uniform float uAberr;
@@ -193,9 +197,23 @@ void main() {
   // Glow.
   col += tint * texture2D(uBloom, uv).r * uBloomAmt;
 
-  // Ghost style: let some of the real camera colour back through.
+  // See-through styles: the real world shows dimly behind the hologram lines.
   vec3 real = texture2D(uVideo, videoUv(uv)).rgb;
-  col = mix(col, real * 0.55 + col * 0.75, uRealMix);
+  float rl = dot(real, vec3(0.299, 0.587, 0.114));
+  vec3 pass = mix(vec3(rl), real, uRealSat);
+  col = mix(col, pass * 0.55 + col * 0.75, uRealMix);
+
+  // Reveal: inside recognised objects, show what is actually there in full colour.
+  float mask = 0.0;
+  for (int i = 0; i < 6; i++) {
+    if (i >= uBoxCount) break;
+    vec4 b = uBoxes[i];
+    vec2 d = min(uv - b.xy, b.zw - uv);
+    float soft = min(0.03, 0.25 * min(b.z - b.x, b.w - b.y));
+    mask = max(mask, smoothstep(0.0, soft, min(d.x, d.y)));
+  }
+  mask *= uReveal;
+  col = mix(col, real * 0.92 + col * 0.35, mask);
 
   // Scanlines that slowly crawl.
   float scan = 0.5 + 0.5 * sin((uv.y * uRes.y / uScanPx) * 6.2831853 + t * 3.0);

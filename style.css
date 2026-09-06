@@ -277,9 +277,6 @@ body.hud-hidden #hud button { pointer-events: none; }
   flex: none;
 }
 
-.scan.rec .scan-head { color: var(--rec); text-shadow: 0 0 8px var(--rec); }
-.scan.rec .dot { background: var(--rec); box-shadow: 0 0 8px var(--rec); animation-duration: 0.9s; }
-
 /* Target brackets drawn over recognised objects. */
 #targets {
   position: absolute;
@@ -392,14 +389,9 @@ body.hud-hidden #hud button { pointer-events: none; }
   text-shadow: 0 0 6px rgba(52, 224, 255, 0.6);
 }
 
-.chip.rec-on .ico {
-  border-color: var(--rec);
-  color: var(--rec);
-  box-shadow: 0 0 16px rgba(255, 77, 77, 0.6);
-}
-.chip.rec-on .lbl { color: var(--rec); text-shadow: none; }
-.chip.rec-on #recDot { r: 0; }
-.chip.rec-on svg { fill: var(--rec); }
+/* The clip buffer is always running; the red dot says so. */
+.chip.buffering #recDot { fill: var(--rec); animation: pulse 1.2s ease-in-out infinite; }
+.chip.buffering .ico { border-color: rgba(255, 77, 77, 0.55); }
 
 .shutter {
   width: 76px;

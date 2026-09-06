@@ -12,6 +12,10 @@ The camera feed goes through a small WebGL pipeline on the phone's GPU:
 4. **Composite** – tint, chromatic aberration, crawling scanlines, a rolling band, random dropout
    rows, grain, flicker, glitch bursts and a vignette.
 
+In the see-through styles (Wire, Scan, Ghost) the real camera image shows dimly behind the
+hologram lines, and inside the brackets of every recognised object the true full-colour view is
+revealed, so the hologram shows what is actually behind it.
+
 The scan panel in the top-left corner tells you what the camera is looking at. An on-device
 object detector (TensorFlow.js running SSDLite MobileNetV2 trained on COCO, 80 everyday classes:
 people, animals, vehicles, furniture, phones, cups, laptops and so on) runs a couple of times a
@@ -47,12 +51,16 @@ app-like feel use *Add to Home Screen* (the page ships a web-app manifest and ic
 | Colour chip | Cycles the tint: Cyan, Matrix, Amber, Magenta, Ice, Spectrum |
 | Style chip | Cycles the look: Solid, Wire (outlines only), Scan (contour lines), Ghost (real colour bleeds through) |
 | Shutter | Saves a PNG (share sheet on phones, download elsewhere) |
-| Record | Records up to 60 s of the hologram as MP4/WebM, then shares or downloads it |
+| Save clip | The app records continuously from the moment the camera starts; tap to save the last 15–30 s as MP4/WebM |
 | Flip (top right) | Switches between back and front cameras |
 | Fullscreen (top right) | Toggles fullscreen where the browser supports it |
 | Tap the view | Hides or shows the controls |
 
-Keyboard on desktop: `Space`/`Enter` capture, `T` theme, `S` style, `R` record, `F` flip, `H` hide HUD.
+Keyboard on desktop: `Space`/`Enter` capture, `T` theme, `S` style, `R` save clip, `F` flip, `H` hide HUD.
+
+The always-on recorder keeps two overlapping 30-second buffers in memory (roughly 40 MB at the
+default bitrate) and uses the phone's video encoder continuously, so expect somewhat higher battery
+use than a plain camera preview.
 
 ## Run locally
 

@@ -23,21 +23,22 @@
     { name: 'Spectrum', tint: [0.60, 0.80, 1.00], edge: [1.00, 1.00, 1.00], spectrum: 1 },
   ];
 
+  // real: how much of the actual camera image shows through; realSat: its colour saturation;
+  // reveal: how fully recognised objects show the true view inside their brackets.
   const STYLES = [
-    { name: 'Solid', fill: 0.55, edge: 1.00, contour: 0.0, real: 0.00, bloom: 1.00 },
-    { name: 'Wire',  fill: 0.06, edge: 1.40, contour: 0.0, real: 0.00, bloom: 1.25 },
-    { name: 'Scan',  fill: 0.30, edge: 0.90, contour: 1.0, real: 0.00, bloom: 1.00 },
-    { name: 'Ghost', fill: 0.45, edge: 0.90, contour: 0.0, real: 0.62, bloom: 0.70 },
+    { name: 'Solid', fill: 0.55, edge: 1.00, contour: 0.0, real: 0.00, realSat: 1.00, reveal: 0.0, bloom: 1.00 },
+    { name: 'Wire',  fill: 0.06, edge: 1.40, contour: 0.0, real: 0.40, realSat: 0.35, reveal: 0.9, bloom: 1.25 },
+    { name: 'Scan',  fill: 0.30, edge: 0.90, contour: 1.0, real: 0.30, realSat: 0.30, reveal: 0.9, bloom: 1.00 },
+    { name: 'Ghost', fill: 0.45, edge: 0.90, contour: 0.0, real: 0.62, realSat: 1.00, reveal: 1.0, bloom: 0.70 },
   ];
 
   const FX = { edgeGain: 2.6, glitch: 0.7, aberration: 0.0028, noise: 0.055, scanCssPx: 3, bloomRadius: 1.6, persist: 0.6 };
   const MAX_DPR = 1.5;        // cap backing-store scale: full DPR is wasted on a post-processed feed
-  const MAX_RECORD_MS = 60000;
 
   const state = {
     running: false, theme: 0, style: 0, facing: 'environment', mirror: false,
     stream: null, deviceIds: [], deviceIndex: -1, quality: 1, t0: 0, cover: [1, 1],
-    recorder: null, recChunks: [], recTimer: 0, recStart: 0, wakeLock: null, recCanvas: null, recCtx: null,
+    wakeLock: null, accent: '#34e0ff',
   };
 
   /* ---------------- WebGL ---------------- */
@@ -74,6 +75,7 @@
     for (let i = 0; i < n; i++) {
       const info = gl.getActiveUniform(p, i);
       u[info.name] = gl.getUniformLocation(p, info.name);
+      if (info.name.slice(-3) === '[0]') u[info.name.slice(0, -3)] = u[info.name];
     }
     return { p, u };
   }
@@ -250,6 +252,11 @@
       gl.uniform3fv(u.uEdgeTint, theme.edge);
       gl.uniform1f(u.uSpectrum, theme.spectrum);
       gl.uniform1f(u.uRealMix, style.real);
+      gl.uniform1f(u.uRealSat, style.realSat);
+      gl.uniform1f(u.uReveal, style.reveal);
+      const nBoxes = style.reveal > 0 ? revealBoxes() : 0;
+      gl.uniform1i(u.uBoxCount, nBoxes);
+      if (nBoxes) gl.uniform4fv(u.uBoxes, boxData);
       gl.uniform1f(u.uBloomAmt, style.bloom);
       gl.uniform1f(u.uGlitch, FX.glitch);
       gl.uniform1f(u.uAberr, FX.aberration);
@@ -257,6 +264,36 @@
       gl.uniform1f(u.uNoise, FX.noise);
     });
     return true;
+  }
+
+  // Recognised-object boxes for the shader's reveal windows, eased per frame so they glide.
+  const smoothRects = new Map();
+  const boxData = new Float32Array(24);
+
+  function revealBoxes() {
+    const cw = els.canvas.clientWidth || 1, ch = els.canvas.clientHeight || 1;
+    const seen = new Set();
+    let n = 0;
+    for (const o of HoloVision.state.objects) {
+      if (n >= 6) break;
+      const r = boxToScreen(o.box);
+      let sm = smoothRects.get(o.id);
+      if (!sm) {
+        sm = { x: r.x, y: r.y, w: r.w, h: r.h };
+        smoothRects.set(o.id, sm);
+      } else {
+        sm.x += (r.x - sm.x) * 0.2; sm.y += (r.y - sm.y) * 0.2;
+        sm.w += (r.w - sm.w) * 0.2; sm.h += (r.h - sm.h) * 0.2;
+      }
+      seen.add(o.id);
+      boxData[n * 4] = sm.x / cw;
+      boxData[n * 4 + 1] = 1 - (sm.y + sm.h) / ch;
+      boxData[n * 4 + 2] = (sm.x + sm.w) / cw;
+      boxData[n * 4 + 3] = 1 - sm.y / ch;
+      n++;
+    }
+    for (const id of Array.from(smoothRects.keys())) if (!seen.has(id)) smoothRects.delete(id);
+    return n;
   }
 
   /* ---------------- Render loop with adaptive quality ---------------- */
@@ -270,8 +307,7 @@
       const dt = Math.min(now - lastFrame, 100);
       frameAvg += (dt - frameAvg) * 0.05;
       // Sustained slowness: shrink the render size (never grows back, to avoid visible pumping).
-      // Frozen while recording so the clip keeps one resolution.
-      if (frameAvg > 28 && state.quality > 0.55 && !state.recorder) {
+      if (frameAvg > 28 && state.quality > 0.55) {
         if (!slowSince) slowSince = now;
         if (now - slowSince > 2000) {
           state.quality = Math.max(0.55, state.quality * 0.85);
@@ -282,7 +318,10 @@
       }
     }
     lastFrame = now;
-    if (render(now) && state.recCanvas) composeFrame(state.recCtx, state.recCanvas.width, state.recCanvas.height);
+    if (render(now) && rolling.active) {
+      checkRollingShape();
+      composeFrame(rolling.ctx, rolling.canvas.width, rolling.canvas.height);
+    }
   }
 
   /* ---------------- Camera ---------------- */
@@ -401,6 +440,7 @@
     root.setProperty('--accent', `rgb(${r}, ${g}, ${b})`);
     root.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, 0.16)`);
     root.setProperty('--accent-line', `rgba(${r}, ${g}, ${b}, 0.45)`);
+    state.accent = `rgb(${r}, ${g}, ${b})`;
   }
 
   function applyStyle() {
@@ -541,17 +581,13 @@
     layoutTargets();
   }
 
-  function accentColor() {
-    return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#34e0ff';
-  }
-
   // Draws the hologram plus (unless the HUD is hidden) the brackets and readout into a 2D context.
   function composeFrame(ctx, W, H) {
     ctx.drawImage(els.canvas, 0, 0, W, H);
     if (document.body.classList.contains('hud-hidden') || !state.running) return;
     const k = W / Math.max(1, els.canvas.clientWidth);
     const v = HoloVision.state;
-    const accent = accentColor();
+    const accent = state.accent;
     const mono = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
     ctx.save();
     ctx.lineWidth = 2 * k;
@@ -598,9 +634,15 @@
     ctx.restore();
   }
 
-  /* ---------------- Recording ---------------- */
+  /* ---------------- Always-on rolling recorder ---------------- */
+  // The composited output is recorded continuously. Two MediaRecorders share the stream,
+  // half a buffer apart, each restarted every BUFFER_SECONDS, so whichever has run longest
+  // always holds at least half a buffer. "Save" stops that one, which yields a valid file
+  // covering the last 15-30 s, and restarts it. Memory stays bounded to two buffers.
 
+  const BUFFER_SECONDS = 30;
   const canRecord = typeof MediaRecorder !== 'undefined' && typeof els.canvas.captureStream === 'function';
+  const rolling = { canvas: null, ctx: null, stream: null, slots: [], active: false, saving: false, uiTimer: 0 };
 
   function pickMime() {
     const list = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
@@ -610,64 +652,116 @@
     return '';
   }
 
-  function setRecordingUi(on) {
-    els.recBtn.classList.toggle('rec-on', on);
-    els.scan.classList.toggle('rec', on);
-    els.recLbl.textContent = on ? 'Stop' : 'Record';
-    els.statusText.textContent = on ? 'REC 0:00' : 'LIVE';
+  function slotStart(slot) {
+    if (!rolling.active || rolling.slots.indexOf(slot) === -1) return false;
+    const mime = pickMime();
+    let rec;
+    try {
+      rec = new MediaRecorder(rolling.stream, mime ? { mimeType: mime, videoBitsPerSecond: 5e6 } : undefined);
+    } catch (err) {
+      return false;
+    }
+    slot.rec = rec;
+    slot.chunks = [];
+    slot.startedAt = performance.now();
+    slot.deliver = false;
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) slot.chunks.push(e.data); };
+    rec.onstop = () => {
+      const chunks = slot.chunks, deliver = slot.deliver;
+      slot.chunks = []; slot.deliver = false; slot.rec = null;
+      if (deliver) finishClip(chunks, rec.mimeType || mime || 'video/webm');
+      slotStart(slot);
+    };
+    rec.onerror = () => { rolling.saving = false; };
+    rec.start(1000);
+    // Never run longer than one buffer.
+    clearTimeout(slot.maxTimer);
+    slot.maxTimer = setTimeout(() => { if (slot.rec === rec && rec.state === 'recording') rec.stop(); }, BUFFER_SECONDS * 1000);
+    // Keep the other recorder half a buffer out of phase.
+    const other = rolling.slots[1 - rolling.slots.indexOf(slot)];
+    if (other) {
+      clearTimeout(other.restartTimer);
+      other.restartTimer = setTimeout(() => {
+        if (!rolling.active) return;
+        if (other.rec && other.rec.state === 'recording') other.rec.stop(); else slotStart(other);
+      }, BUFFER_SECONDS * 500);
+    }
+    return true;
   }
 
-  function startRecording() {
-    let recorder, stream;
+  function bufferedSeconds() {
+    let best = 0;
+    for (const sl of rolling.slots) {
+      if (sl.rec && sl.rec.state === 'recording') best = Math.max(best, (performance.now() - sl.startedAt) / 1000);
+    }
+    return Math.min(BUFFER_SECONDS, Math.floor(best));
+  }
+
+  function startRolling() {
+    if (!canRecord || rolling.active) return;
     const rc = document.createElement('canvas');
     rc.width = els.canvas.width;
     rc.height = els.canvas.height;
-    const rctx = rc.getContext('2d');
+    const ctx = rc.getContext('2d');
+    let stream;
     try {
-      composeFrame(rctx, rc.width, rc.height);
+      composeFrame(ctx, rc.width, rc.height);
       stream = rc.captureStream(30);
-      const mime = pickMime();
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8e6 } : undefined);
     } catch (err) {
-      toast('Recording is not supported here');
+      els.recBtn.hidden = true;
       return;
     }
-    state.recCanvas = rc;
-    state.recCtx = rctx;
-    state.recChunks = [];
-    recorder.ondataavailable = (e) => { if (e.data && e.data.size) state.recChunks.push(e.data); };
-    recorder.onstop = () => {
-      stream.getTracks().forEach((tr) => tr.stop());
-      const type = recorder.mimeType || 'video/webm';
-      const ext = type.indexOf('mp4') !== -1 ? 'mp4' : 'webm';
-      const chunks = state.recChunks;
-      state.recChunks = [];
-      state.recorder = null;
-      state.recCanvas = null;
-      state.recCtx = null;
-      clearInterval(state.recTimer);
-      setRecordingUi(false);
-      if (!chunks.length) { toast('Nothing was recorded'); return; }
-      deliver(new File(chunks, `hologram-${stamp()}.${ext}`, { type }), 'Hologram clip');
-    };
-    recorder.onerror = () => toast('Recording failed');
-    recorder.start(500);
-    state.recorder = recorder;
-    state.recStart = performance.now();
-    setRecordingUi(true);
-    state.recTimer = setInterval(() => {
-      const s = Math.floor((performance.now() - state.recStart) / 1000);
-      els.statusText.textContent = `REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-      if (s * 1000 >= MAX_RECORD_MS) stopRecording();
-    }, 250);
+    rolling.canvas = rc; rolling.ctx = ctx; rolling.stream = stream;
+    rolling.slots = [{ restartTimer: 0, maxTimer: 0 }, { restartTimer: 0, maxTimer: 0 }];
+    rolling.active = true;
+    if (!slotStart(rolling.slots[0])) {
+      stopRolling();
+      els.recBtn.hidden = true;
+      return;
+    }
+    els.recBtn.classList.add('buffering');
+    clearInterval(rolling.uiTimer);
+    rolling.uiTimer = setInterval(() => {
+      if (!rolling.saving) els.recLbl.textContent = `Save ${bufferedSeconds()}s`;
+    }, 500);
   }
 
-  function stopRecording() {
-    if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop();
+  function stopRolling() {
+    rolling.active = false;
+    for (const sl of rolling.slots) {
+      clearTimeout(sl.restartTimer);
+      clearTimeout(sl.maxTimer);
+      if (sl.rec && sl.rec.state !== 'inactive') { sl.deliver = false; sl.rec.stop(); }
+    }
+    if (rolling.stream) rolling.stream.getTracks().forEach((tr) => tr.stop());
+    rolling.slots = []; rolling.canvas = null; rolling.ctx = null; rolling.stream = null;
+    clearInterval(rolling.uiTimer);
+    els.recBtn.classList.remove('buffering');
   }
 
-  function toggleRecording() {
-    if (state.recorder) stopRecording(); else startRecording();
+  // A rotation changes the view's shape; restart the buffer so the clip keeps one aspect ratio.
+  function checkRollingShape() {
+    const a = rolling.canvas.width / rolling.canvas.height;
+    const b = els.canvas.width / els.canvas.height;
+    if (Math.abs(a - b) / b > 0.05) { stopRolling(); startRolling(); }
+  }
+
+  function saveClip() {
+    if (!rolling.active) { toast('Recording is not available here'); return; }
+    if (rolling.saving) return;
+    const live = rolling.slots.filter((sl) => sl.rec && sl.rec.state === 'recording').sort((a, b) => a.startedAt - b.startedAt);
+    if (!live.length || performance.now() - live[0].startedAt < 800) { toast('Nothing buffered yet'); return; }
+    rolling.saving = true;
+    els.recLbl.textContent = 'Saving';
+    live[0].deliver = true;
+    live[0].rec.stop();
+  }
+
+  function finishClip(chunks, type) {
+    rolling.saving = false;
+    if (!chunks.length) { toast('Nothing buffered yet'); return; }
+    const ext = type.indexOf('mp4') !== -1 ? 'mp4' : 'webm';
+    deliver(new File(chunks, `hologram-${stamp()}.${ext}`, { type }), 'Hologram clip');
   }
 
   /* ---------------- Fullscreen / wake lock ---------------- */
@@ -724,6 +818,7 @@
     keepAwake();
     toast('Tap the screen to hide controls', 2600);
     HoloVision.start(els.video);
+    startRolling();
   }
 
   HoloVision.onUpdate(renderVision);
@@ -734,7 +829,7 @@
   els.snapBtn.addEventListener('click', capture);
   els.themeBtn.addEventListener('click', () => { state.theme = (state.theme + 1) % THEMES.length; applyTheme(); });
   els.styleBtn.addEventListener('click', () => { state.style = (state.style + 1) % STYLES.length; applyStyle(); });
-  els.recBtn.addEventListener('click', toggleRecording);
+  els.recBtn.addEventListener('click', saveClip);
   els.fsBtn.addEventListener('click', toggleFullscreen);
   els.canvas.addEventListener('click', () => { if (state.running) document.body.classList.toggle('hud-hidden'); });
 
@@ -763,7 +858,7 @@
 
   // Small public surface for tinkering from the console (or automated tests).
   window.HologramAR = {
-    start, capture, render, state, themes: THEMES, styles: STYLES, fx: FX, vision: HoloVision,
+    start, capture, render, state, themes: THEMES, styles: STYLES, fx: FX, vision: HoloVision, saveClip, bufferedSeconds,
     setTheme(i) { state.theme = ((i % THEMES.length) + THEMES.length) % THEMES.length; applyTheme(); },
     setStyle(i) { state.style = ((i % STYLES.length) + STYLES.length) % STYLES.length; applyStyle(); },
   };
